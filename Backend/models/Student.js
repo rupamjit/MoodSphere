@@ -49,16 +49,19 @@ const StudentSchema=new mongoose.Schema({
         type:String,
         enum:['Male',"Female","Other"],
     },
+    
     ProfileImage:String,
     // 🧠 Mental Health Data
     currentMood: {
       type: String,
       default: "neutral",
     },
+
     moodScore: {
       type: Number,
       default: 0,
     },
+
     riskLevel: {
       type: String,
       enum: ["low", "medium", "high"],
