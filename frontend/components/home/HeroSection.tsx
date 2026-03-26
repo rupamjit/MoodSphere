@@ -4,8 +4,11 @@ import { Button } from "@/components/ui/button"
 import { motion } from "framer-motion"
 import { DashboardPreview } from "@/components/home/dashboard-preview"
 import BackgroundPaths from "@/components/kokonutui/background-paths"
+import { useRouter } from "next/navigation"
 
 export default function HeroSection() {
+  const router = useRouter()
+
   return (
     <>
       {/* Hero Section  */}
@@ -40,12 +43,18 @@ export default function HeroSection() {
             </p>
 
             <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
-              <Button className="h-[44px] rounded-full bg-linear-to-r from-orange-400 via-orange-500 to-orange-600 px-8 text-[15px] font-semibold text-white shadow-sm hover:opacity-90 transition-opacity">
+              <Button
+                onClick={() => router.push("/signup")}
+                className="h-11 rounded-full bg-linear-to-r from-orange-400 via-orange-500 to-orange-600 px-8 text-[15px] font-semibold text-white shadow-sm hover:opacity-90 transition-opacity"
+              >
                 Get started
               </Button>
               <Button
+                onClick={() => {
+                  document.getElementById("how-it-works")?.scrollIntoView({ behavior: "smooth" })
+                }}
                 variant="outline"
-                className="h-[44px] rounded-full border-neutral-200 bg-white px-8 text-[15px] font-semibold text-neutral-800 shadow-sm transition hover:border-neutral-300 hover:bg-neutral-50"
+                className="h-11 rounded-full border-neutral-200 bg-white px-8 text-[15px] font-semibold text-neutral-800 shadow-sm transition hover:border-neutral-300 hover:bg-neutral-50"
               >
                 Learn more
               </Button>
