@@ -24,7 +24,6 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar"
-import { Logo } from "@/components/logo"
 import { useAuth } from "@/components/auth/auth-context"
 import { cn } from "@/lib/utils"
 
