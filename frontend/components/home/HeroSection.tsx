@@ -2,7 +2,7 @@
 
 import { Button } from "@/components/ui/button"
 import { motion } from "framer-motion"
-import { DashboardPreview } from "@/components/dashboard-preview"
+import { DashboardPreview } from "@/components/home/dashboard-preview"
 import BackgroundPaths from "@/components/kokonutui/background-paths"
 
 export default function HeroSection() {
