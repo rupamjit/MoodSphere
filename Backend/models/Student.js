@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 const moodHistorySchema=new mongoose.Schema({
     textScore:Number,
     voiceScore:Number,
-    FaceScore:Number,
+    faceScore:Number,
     finalScore:Number,
     emotion:String,
     date:{
