@@ -16,6 +16,7 @@ import {
   getStudentCurrentConsultations,
 	getStudentStreamToken,
 } from "../controllers/consultation.js";
+import { generateAndSaveBlog } from "../controllers/generateBlog.js";
 
 const router=express.Router();
 
@@ -45,5 +46,6 @@ router.get("/consultants", auth, listAvailableDoctors);
 router.get("/consultations/current", auth, getStudentCurrentConsultations);
 router.post("/consultations", auth, createConsultation);
 router.post("/consultations/:consultationId/stream-token", auth, getStudentStreamToken);
+router.post("/generate-blog", generateAndSaveBlog);
 
 export default router;
