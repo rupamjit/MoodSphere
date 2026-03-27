@@ -10,6 +10,7 @@ import {
 	getDashboardStreak,
 	getDashboardTrend,
 } from "../controllers/dashboard.js";
+import { generateAndSaveBlog } from "../controllers/generateBlog.js";
 
 const router=express.Router();
 
@@ -32,5 +33,7 @@ router.get("/dashboard/trend", auth, getDashboardTrend);
 router.get("/dashboard/streak", auth, getDashboardStreak);
 router.get("/dashboard/recent-sessions", auth, getDashboardRecentSessions);
 router.get("/dashboard/ai-tips", auth, getDashboardAiTips);
+
+router.post("/generate-blog", generateAndSaveBlog);
 
 export default router;
