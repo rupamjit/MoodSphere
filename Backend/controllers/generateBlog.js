@@ -22,7 +22,11 @@ const decrypt = (text) => {
 
 export const generateAndSaveBlog = async (req, res) => {
   try {
-    const { sessions_id, student_id } = req.body;
+    const { sessions_id } = req.body;
+
+    if (!req.user?._id) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
 
     if (!sessions_id || sessions_id.length === 0) {
       return res.status(400).json({ error: "Sessions are required" });
@@ -31,6 +35,7 @@ export const generateAndSaveBlog = async (req, res) => {
     // 🔥 1. Fetch sessions
     const dbSessions = await Session.find({
       _id: { $in: sessions_id },
+      studentId: req.user._id,
     });
 
     if (!dbSessions.length) {
@@ -72,8 +77,9 @@ export const generateAndSaveBlog = async (req, res) => {
     console.log("Sessions to send to Flask:", sessions);
 
     // 🔥 3. Call Flask API
+    const aiBase = (process.env.AI_API || "http://127.0.0.1:6000").replace(/\/$/, "");
     const flaskRes = await axios.post(
-      "http://127.0.0.1:5000/api/generate-blog",
+      `${aiBase}/api/generate-blog`,
       { sessions }
     );
 
@@ -122,7 +128,7 @@ export const generateAndSaveBlog = async (req, res) => {
       improvement: blog.improvement,
       action: blog.action,
       summary,
-      student_id,
+      student_id: "anonymous",
     });
 
     await newBlog.save();
@@ -134,8 +140,33 @@ export const generateAndSaveBlog = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Controller Error:", error.message);
+    const upstreamStatus = error?.response?.status;
+    const upstreamData = error?.response?.data;
+    const errorMessage = upstreamData?.error || error?.message || "Unknown error";
 
+    console.error("Controller Error:", errorMessage);
+
+    res.status(500).json({
+      error: "Internal Server Error",
+      details: errorMessage,
+      upstreamStatus,
+      upstreamData,
+    });
+  }
+};
+
+export const getAllBlogs = async (_req, res) => {
+  try {
+    const blogs = await Blog.find({ action: "create_blog" })
+      .sort({ createdAt: -1 })
+      .select("title story key_learnings final_message summary createdAt")
+      .lean();
+
+    res.status(200).json({
+      message: "Blogs fetched successfully",
+      blogs,
+    });
+  } catch (error) {
     res.status(500).json({
       error: "Internal Server Error",
       details: error.message,

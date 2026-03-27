@@ -64,7 +64,8 @@ export const getFinalAIResponse = async ({
           final_emotion: finalDetectedEmotion,
         },
         message,
-      }
+      },
+      15000
     );
 
     let aiResponse = chatRes.data.data.response;
@@ -122,11 +123,22 @@ export const getFinalAIResponse = async ({
     };
 
   } catch (error) {
-    console.error("AI Service Error:", error.message);
+    const errorMessage = error?.response?.data?.error || error?.message || "AI processing failed";
+    console.error("AI Service Error:", errorMessage);
 
     return {
-      success: false,
-      message: "AI processing failed",
+      success: true,
+      data: {
+        finalEmotion: "neutral",
+        confidence: 0,
+        riskLevel: "unknown",
+        reply: fallbackReplyByEmotion("neutral"),
+        action: "none",
+        modelEmotion: "neutral",
+        studentContext: studentData || {},
+      },
+      degraded: true,
+      message: errorMessage,
     };
   }
 };

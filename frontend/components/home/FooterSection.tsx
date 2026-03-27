@@ -145,6 +145,21 @@ export function FooterSection() {
               <p className="max-w-sm text-[13px] leading-relaxed text-neutral-600">
                 Detect emotional risk trends early with consent-led insights and proactive campus support workflows.
               </p>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Link
+                  href="/doctor/login"
+                  className="inline-flex h-9 items-center justify-center rounded-lg border border-orange-200 bg-orange-50 px-4 text-[12px] font-semibold text-orange-700 transition-colors hover:bg-orange-100"
+                >
+                  Start as Doctor
+                </Link>
+                <Link
+                  href="/doctor/signup"
+                  className="inline-flex h-9 items-center justify-center rounded-lg border border-[#E9D9C8] bg-white/90 px-4 text-[12px] font-semibold text-neutral-700 transition-colors hover:border-orange-200 hover:text-orange-600"
+                >
+                  Doctor Sign Up
+                </Link>
+              </div>
             </motion.div>
 
             <div className="grid grid-cols-2 gap-8 sm:grid-cols-3">

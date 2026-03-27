@@ -54,6 +54,9 @@ export const endSession = async (req, res) => {
     if (!session) {
       return res.status(404).json({ msg: "Session not found" });
     }
+    if (String(session.studentId) !== String(req.user.id)) {
+      return res.status(403).json({ msg: "You are not allowed to access this session" });
+    }
 
     // 2️⃣ Get student
     const student = await Student.findById(req.user.id);
@@ -127,10 +130,16 @@ export const endSession = async (req, res) => {
     res.status(200).json({
       success: true,
       session: {
+        id: session._id,
         finalScore,
         finalMood,
         riskLevel,
+        averageTextScore: avgText,
+        averageVoiceScore: avgVoice,
+        averageFaceScore: avgFace,
+        messagesCount: msgs.length,
       },
+      sessionDetails: serializeSessionDetails(session),
       student: {
         currentMood: student.currentMood,
         moodScore: student.moodScore,
@@ -143,13 +152,11 @@ export const endSession = async (req, res) => {
   }
 };
 
-
-
-export const sendMessage = async (req, res) => {
+// Get full details of one session for report view
+export const getSessionDetails = async (req, res) => {
   try {
-    const { sessionId, message, studentId } = req.body;
+    const { sessionId } = req.params;
 
-    // 1️⃣ Find session
     const session = await Session.findById(sessionId);
     if (!session) {
       return res.status(404).json({ msg: "Session not found" });

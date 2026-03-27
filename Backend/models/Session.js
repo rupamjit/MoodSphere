@@ -52,7 +52,6 @@ const sessionSchema = new mongoose.Schema(
     sessionDuration: {
       type: Number, // 5 / 10 / 15 minutes
       enum: [5, 10, 15],
-      required: true,
     },
 
     status: {

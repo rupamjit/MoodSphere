@@ -1,6 +1,7 @@
 import Doctor from "../models/Doctor.js";
 import bcrypt from "bcryptjs";
 import { generateToken } from "../utils/generateToken.js";
+import Consultation from "../models/Consultation.js";
 
 // ✅ SIGNUP
 export const signup = async (req, res) => {
@@ -185,6 +186,44 @@ export const updateDoctorProfile = async (req, res) => {
 
   } catch (error) {
     console.log("Error ->", error.message);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// ✅ GET CURRENT/PENDING CONSULTATIONS
+export const getCurrentConsultations = async (req, res) => {
+  try {
+    const consultations = await Consultation.find({
+      doctorId: req.user._id,
+      status: { $in: ["pending", "ongoing"] },
+    })
+      .sort({ scheduledAt: 1, createdAt: -1 })
+      .lean();
+
+    res.status(200).json({
+      message: "Current consultations fetched successfully",
+      consultations,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// ✅ GET COMPLETED CONSULTATION HISTORY
+export const getCompletedConsultations = async (req, res) => {
+  try {
+    const consultations = await Consultation.find({
+      doctorId: req.user._id,
+      status: "completed",
+    })
+      .sort({ completedAt: -1, updatedAt: -1 })
+      .lean();
+
+    res.status(200).json({
+      message: "Completed consultations fetched successfully",
+      consultations,
+    });
+  } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };

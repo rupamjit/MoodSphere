@@ -12,7 +12,14 @@ import {
   getDashboardStreak,
   getDashboardTrend,
 } from "../controllers/dashboard.js";
-import { generateAndSaveBlog } from "../controllers/generateBlog.js";
+import {
+  listAvailableDoctors,
+  createConsultation,
+  getStudentCurrentConsultations,
+	getStudentConsultationHistory,
+	getStudentStreamToken,
+} from "../controllers/consultation.js";
+import { generateAndSaveBlog, getAllBlogs } from "../controllers/generateBlog.js";
 
 // Middleware
 import { protect as auth } from "../middleware/auth.js";
@@ -44,6 +51,8 @@ router.post("/login", login);
 router.post("/start", auth, startSession);
 router.post("/message", auth, upload.single("image"), sendMessage);
 router.post("/end", auth, endSession);
+router.get("/session/:sessionId/details", auth, getSessionDetails);
+router.get("/sessions/history", auth, getStudentSessionHistory);
 
 // 👤 Profile routes
 router.get("/profile", auth, getStudentProfile);

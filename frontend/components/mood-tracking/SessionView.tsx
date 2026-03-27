@@ -44,7 +44,6 @@ export function SessionView({
   elapsed,
   currentQuestion,
   totalQuestions,
-  questionText,
   isRecording,
   transcriptDraft,
   onStartRecording,
@@ -131,7 +130,7 @@ export function SessionView({
 
           <CardContent className="flex h-full flex-col gap-4 overflow-y-auto px-4 pb-4 pt-4 md:px-5">
             {/* Camera preview */}
-            <div className="relative flex-1 overflow-hidden rounded-xl border bg-muted/40">
+            <div className="relative min-h-[50vh] flex-1 overflow-hidden rounded-xl border bg-muted/40">
               <video
                 ref={videoRef}
                 autoPlay
@@ -160,40 +159,6 @@ export function SessionView({
                   </motion.div>
                 )}
               </AnimatePresence>
-            </div>
-
-            {/* Current question */}
-            <div className="rounded-xl border bg-muted/20 p-3">
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Current AI Question
-              </p>
-              <p className="mt-1 text-sm text-foreground">{questionText}</p>
-            </div>
-
-            {/* Live transcript box — read-only, driven by react-speech-recognition */}
-            <div className="rounded-xl border bg-muted/10 p-3 min-h-20">
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1">
-                Live Transcript
-                {isRecording && (
-                  <span className="ml-2 inline-flex items-center gap-1 text-red-500">
-                    <motion.span
-                      className="inline-block h-1.5 w-1.5 rounded-full bg-red-500"
-                      animate={{ opacity: [0.3, 1, 0.3] }}
-                      transition={{ duration: 1.2, repeat: Infinity }}
-                    />
-                    Listening…
-                  </span>
-                )}
-              </p>
-              {transcriptDraft ? (
-                <p className="text-sm text-foreground leading-relaxed">{transcriptDraft}</p>
-              ) : (
-                <p className="text-sm text-muted-foreground italic">
-                  {isRecording
-                    ? "Start speaking — your words will appear here…"
-                    : "Press Start Recording, then speak your answer."}
-                </p>
-              )}
             </div>
 
             {/* Mic / Cam toggles */}

@@ -3,21 +3,21 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { AnimatePresence } from "framer-motion"
 import SpeechRecognition, { useSpeechRecognition } from "react-speech-recognition"
+import { useRouter } from "next/navigation"
+import { useAuth } from "@/components/auth/auth-context"
 import {
-  Phase, RiskLevel, ChatMsg, MoodResult,
+  Phase, RiskLevel, ChatMsg, MoodResult, SessionDetails,
   fmt,
   LandingView, SessionView, AnalyzingView, ResultsView
 } from "@/components/mood-tracking"
 
-const INTERVIEW_QUESTIONS = [
-  "Tell me how you are feeling right now in one or two lines.",
-  "What was the most stressful moment in your day today?",
-  "Did anything make you feel better today?",
-  "How is your sleep and energy level this week?",
-  "What support do you feel you need right now?",
-]
+const INITIAL_INTERVIEW_PROMPT =
+  "Tell me how you are feeling right now in one or two lines."
 
 const CAPTURE_INTERVAL_MS = 1800
+const API_BASE_DEFAULT = process.env.NEXT_PUBLIC_BACKEND_URL?.trim() || "http://localhost:5005"
+const API_BASE_CANDIDATES = [API_BASE_DEFAULT, "http://localhost:5005", "http://127.0.0.1:5005"]
+  .filter((value, index, arr) => Boolean(value) && arr.indexOf(value) === index)
 
 const normalizeTranscript = (text: string) => text.replace(/\s+/g, " ").trim()
 
@@ -29,8 +29,48 @@ type RecordedTurn = {
   durationMs: number
 }
 
+type BackendSessionStart = {
+  _id: string
+}
+
+type BackendSendMessage = {
+  reply: string
+  emotion?: string
+  score?: number
+  riskLevel?: RiskLevel
+  action?: string
+}
+
+type BackendSessionEnd = {
+  success: boolean
+  session: {
+    id?: string
+    finalScore: number
+    finalMood: string
+    riskLevel: RiskLevel
+    averageTextScore?: number
+    averageVoiceScore?: number
+    averageFaceScore?: number
+    messagesCount?: number
+  }
+  sessionDetails?: SessionDetails
+}
+
+type BackendSessionDetails = {
+  success: boolean
+  session: SessionDetails
+}
+
+const toScoreNumber = (value: number) => {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return 0
+  return Math.round(Math.abs(parsed) * 100)
+}
+
 
 export default function MoodTrackingPage() {
+  const router = useRouter()
+  const { token } = useAuth()
   const [phase, setPhase] = useState<Phase>("landing")
   const [elapsed, setElapsed] = useState(0)
   const [hasVideo, setHasVideo] = useState(false)
@@ -40,10 +80,14 @@ export default function MoodTrackingPage() {
   const [aiTyping, setAiTyping] = useState(false)
   const [result, setResult] = useState<MoodResult | null>(null)
   const [analyzeStep, setAnalyzeStep] = useState(0)
-  const [questionIndex, setQuestionIndex] = useState(0)
+  const [currentPrompt, setCurrentPrompt] = useState(INITIAL_INTERVIEW_PROMPT)
   const [isRecording, setIsRecording] = useState(false)
   const [responseCount, setResponseCount] = useState(0)
   const [activeStream, setActiveStream] = useState<MediaStream | null>(null)
+  const [backendSessionId, setBackendSessionId] = useState<string | null>(null)
+  const [activeApiBase, setActiveApiBase] = useState(API_BASE_DEFAULT)
+  const [blogGenerating, setBlogGenerating] = useState(false)
+  const [blogStatus, setBlogStatus] = useState<string | null>(null)
 
   // react-speech-recognition 
   const {
@@ -74,6 +118,42 @@ export default function MoodTrackingPage() {
   const captureInitRef = useRef(false)
   const shouldCaptureRef = useRef(false)
   const chatBottomRef  = useRef<HTMLDivElement>(null)
+
+  const requestWithFallback = useCallback(
+    async <T,>(path: string, init?: RequestInit): Promise<T> => {
+      const candidateBases = [activeApiBase, ...API_BASE_CANDIDATES].filter(
+        (value, index, arr) => Boolean(value) && arr.indexOf(value) === index
+      )
+      let lastError = "Request failed"
+
+      for (const base of candidateBases) {
+        let response: Response
+        try {
+          response = await fetch(`${base}${path}`, init)
+        } catch (error) {
+          // Retry only on network/CORS style failures where fetch itself rejects.
+          lastError = error instanceof Error ? error.message : "Network request failed"
+          continue
+        }
+
+        const data = await response.json().catch(() => ({})) as T & { message?: string; msg?: string; error?: string }
+
+        if (!response.ok) {
+          // Surface backend error directly instead of masking it with fallback attempts.
+          throw new Error(data?.message || data?.msg || data?.error || `Request failed (${response.status})`)
+        }
+
+        if (base !== activeApiBase) {
+          setActiveApiBase(base)
+        }
+
+        return data as T
+      }
+
+      throw new Error(lastError)
+    },
+    [activeApiBase]
+  )
 
   useEffect(() => { isRecordingRef.current = isRecording }, [isRecording])
   useEffect(() => { chatBottomRef.current?.scrollIntoView({ behavior: "smooth" }) }, [msgs, aiTyping])
@@ -106,19 +186,6 @@ export default function MoodTrackingPage() {
 
   const handleVideoReady = useCallback(() => setHasVideo(true), [])
 
-  // ── stream lifecycle ──────────────────────────────────────────────────────
-  /**
-   * CRITICAL FIX — camera stays on bug:
-   *
-   * Two things are required to turn off the OS camera indicator:
-   *   1. Call track.stop() on every MediaStreamTrack
-   *   2. Set video.srcObject = null
-   *
-   * Step 2 is essential. Even after tracks are stopped, the browser keeps the
-   * hardware device reserved as long as any HTMLVideoElement still holds a
-   * reference to the stream via srcObject. Clearing it releases the device
-   * immediately and the OS indicator turns off.
-   */
   const releaseTracks = useCallback(() => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop())
@@ -198,7 +265,7 @@ export default function MoodTrackingPage() {
     setIsRecording(true)
   }, [acquireStream, captureFrame, resetTranscript])
 
-  const stopTurnRecording = useCallback(async (idx: number): Promise<RecordedTurn | null> => {
+  const stopTurnRecording = useCallback(async (questionLabel: string): Promise<RecordedTurn | null> => {
     // Keep both pre-stop and post-stop snapshots because Web Speech can flush final words on stop.
     const transcriptBeforeStop = normalizeTranscript(transcriptRef.current)
 
@@ -252,7 +319,7 @@ export default function MoodTrackingPage() {
       ])
 
       console.warn("No speech captured for turn", {
-        questionNumber: idx + 1,
+        questionNumber: turnsRef.current.length + 1,
         transcriptBeforeStop,
         transcriptAfterStop,
       })
@@ -262,7 +329,7 @@ export default function MoodTrackingPage() {
 
     // 6. Persist turn data 
     const savedTurn: RecordedTurn = {
-      question:   INTERVIEW_QUESTIONS[idx] || "Interview answer",
+      question:   questionLabel || "Interview answer",
       transcript: savedTranscript,
       frames:     [...turnFramesRef.current],
       audioBlob,
@@ -279,7 +346,7 @@ export default function MoodTrackingPage() {
 
     //  7. Console log 
     console.log("=== Recorded Turn Payload ===", {
-      questionNumber:     idx + 1,
+      questionNumber:     turnsRef.current.length,
       question:           savedTurn.question,
       transcript:         savedTurn.transcript,
       transcriptBeforeStop,
@@ -297,31 +364,43 @@ export default function MoodTrackingPage() {
   //  session flow
   const stopAndAdvance = async () => {
     if (!isRecording) return
-    const idx = questionIndex
-    const savedTurn = await stopTurnRecording(idx)
+    const savedTurn = await stopTurnRecording(currentPrompt)
     if (!savedTurn) return
 
-    const nextIdx = idx + 1
-    if (nextIdx >= INTERVIEW_QUESTIONS.length) {
-      setMsgs((prev) => [
-        ...prev,
-        { role: "ai", text: "All questions are complete. Click End Session to generate your report.", ts: Date.now() },
-      ])
-      return
+    setAiTyping(true)
+    let aiReply = "Thanks for sharing."
+    try {
+      if (token && backendSessionId) {
+        const data = await requestWithFallback<BackendSendMessage>("/api/student/message", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            sessionId: backendSessionId,
+            message: savedTurn.transcript,
+          }),
+        })
+        if (data.reply) aiReply = data.reply
+      }
+    } catch (error) {
+      console.error("sendMessage failed:", error)
+      aiReply = "I could not process that right now, but your response is noted."
     }
 
-    setAiTyping(true)
-    setTimeout(() => {
-      setAiTyping(false)
-      setQuestionIndex(nextIdx)
-      setMsgs((prev) => [
-        ...prev,
-        { role: "ai", text: INTERVIEW_QUESTIONS[nextIdx], ts: Date.now() },
-      ])
-    }, 900)
+    await new Promise<void>((resolve) => setTimeout(resolve, 600))
+    setAiTyping(false)
+    setMsgs((prev) => [...prev, { role: "ai", text: aiReply, ts: Date.now() }])
+    setCurrentPrompt(aiReply)
   }
 
   const startSession = async () => {
+    if (!token) {
+      alert("Please login first. Student session APIs require auth token.")
+      return
+    }
+
     if (!browserSupportsSpeechRecognition) {
       alert("Your browser does not support speech recognition. Please use Chrome.")
       return
@@ -333,11 +412,29 @@ export default function MoodTrackingPage() {
     setMsgs([])
     setResult(null)
     setElapsed(0)
-    setQuestionIndex(0)
+    setCurrentPrompt(INITIAL_INTERVIEW_PROMPT)
     setResponseCount(0)
     setIsRecording(false)
+    setBackendSessionId(null)
+    setBlogStatus(null)
+    setBlogGenerating(false)
     transcriptRef.current = ""
     resetTranscript()
+
+    try {
+      const started = await requestWithFallback<BackendSessionStart>("/api/student/start", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ duration: 10 }),
+      })
+      setBackendSessionId(started._id)
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Could not start session")
+      return
+    }
 
     const stream = await acquireStream()
     if (!stream) return
@@ -350,14 +447,42 @@ export default function MoodTrackingPage() {
       setAiTyping(true)
       setTimeout(() => {
         setAiTyping(false)
-        setMsgs([{ role: "ai", text: INTERVIEW_QUESTIONS[0], ts: Date.now() }])
+        setMsgs([{ role: "ai", text: INITIAL_INTERVIEW_PROMPT, ts: Date.now() }])
         // User must click "Start Recording" manually — no auto-start
       }, 900)
     }, 300)
   }
 
   const endSession = async () => {
-    if (isRecording) await stopTurnRecording(questionIndex)
+    if (!token || !backendSessionId) {
+      alert("Session not initialized. Please start a new session.")
+      return
+    }
+
+    if (isRecording) {
+      const savedTurn = await stopTurnRecording(currentPrompt)
+      if (savedTurn) {
+        try {
+          const data = await requestWithFallback<BackendSendMessage>("/api/student/message", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              sessionId: backendSessionId,
+              message: savedTurn.transcript,
+            }),
+          })
+
+          if (data.reply) {
+            setMsgs((prev) => [...prev, { role: "ai", text: data.reply, ts: Date.now() }])
+          }
+        } catch (error) {
+          console.error("Final sendMessage failed:", error)
+        }
+      }
+    }
 
     if (timerRef.current) clearInterval(timerRef.current)
     releaseTracks()
@@ -371,33 +496,81 @@ export default function MoodTrackingPage() {
     setAnalyzeStep(0)
     ;[0, 1, 2, 3].forEach((_, i) => setTimeout(() => setAnalyzeStep(i + 1), i * 1100 + 500))
 
-    setTimeout(() => {
-      const textDensity = turnsRef.current.length
-        ? turnsRef.current.reduce((acc, t) => acc + t.transcript.length, 0) / turnsRef.current.length : 0
-      const avgDuration = turnsRef.current.length
-        ? turnsRef.current.reduce((acc, t) => acc + t.durationMs, 0) / turnsRef.current.length : 0
-
-      const ts    = Math.min(95, 45 + textDensity / 8 + Math.random() * 18)
-      const vs    = Math.min(95, 48 + avgDuration / 2500 + Math.random() * 16)
-      const fs    = Math.min(95, 42 + turnsRef.current.length * 10 + Math.random() * 12)
-      const final = Math.round(ts * 0.35 + vs * 0.35 + fs * 0.3)
-      const emotions  = ["Calm", "Anxious", "Hopeful", "Stressed", "Neutral", "Reflective"]
-      const emotion   = emotions[Math.floor(Math.random() * emotions.length)]
-      const riskLevel: RiskLevel = final >= 68 ? "low" : final >= 45 ? "medium" : "high"
-
-      setResult({
-        finalScore: final, textScore: Math.round(ts), voiceScore: Math.round(vs), faceScore: Math.round(fs),
-        emotion, riskLevel,
-        summary: `Your ${fmt(elapsed)} session across ${turnsRef.current.length} responses revealed a ${emotion.toLowerCase()} emotional state. Voice tone analysis detected ${vs > 65 ? "stable" : "slightly elevated"} stress markers, and your verbal content suggests a ${riskLevel} current risk profile.`,
-        suggestions:
-          riskLevel === "high"
-            ? ["Reach out to a campus counsellor this week", "Try box breathing: 4s in, 4s hold, 4s out", "Limit screen time before sleep tonight"]
-            : riskLevel === "medium"
-            ? ["Journalling for 10 minutes can help process emotions", "A short walk in natural light may shift your mood", "Check in with yourself again tomorrow"]
-            : ["You're in a good place — maintain this awareness", "Share how you're feeling with someone close", "Celebrate your emotional self-awareness today"],
+    try {
+      const ended = await requestWithFallback<BackendSessionEnd>("/api/student/end", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ sessionId: backendSessionId }),
       })
-      setPhase("results")
-    }, 4300)
+
+      const final = toScoreNumber(ended.session.finalScore)
+      const textScore = toScoreNumber(ended.session.averageTextScore || 0)
+      const voiceScore = toScoreNumber(ended.session.averageVoiceScore || 0)
+      const faceScore = toScoreNumber(ended.session.averageFaceScore || 0)
+      const emotion = ended.session.finalMood || "neutral"
+      const riskLevel = ended.session.riskLevel || "low"
+
+      let details: SessionDetails | undefined = ended.sessionDetails
+      const detailsSessionId = ended.session.id || backendSessionId
+      if (!details && detailsSessionId) {
+        try {
+          const detailsRes = await requestWithFallback<BackendSessionDetails>(`/api/student/session/${detailsSessionId}/details`, {
+            method: "GET",
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          })
+          details = detailsRes.session
+        } catch (detailsError) {
+          console.error("session details fetch failed:", detailsError)
+        }
+      }
+
+      const summary = `Your ${fmt(elapsed)} session has been analyzed using backend scoring and stored successfully. Final mood: ${emotion}. Risk level: ${riskLevel}.`
+      const suggestions =
+        riskLevel === "high"
+          ? [
+              "Reach out to a counsellor or trusted mentor soon.",
+              "Take a short grounding break with breathing before your next task.",
+              "Prioritize sleep and reduce late-night screen exposure today.",
+            ]
+          : riskLevel === "medium"
+          ? [
+              "Take 10 minutes to journal your stress triggers.",
+              "Use a short walk or stretch break to reset your mind.",
+              "Check in again tomorrow to monitor changes.",
+            ]
+          : [
+              "Keep your current self-care routine consistent.",
+              "Continue sharing your feelings with trusted people.",
+              "Schedule regular check-ins to maintain progress.",
+            ]
+
+      setTimeout(() => {
+        setResult({
+          sessionId: detailsSessionId,
+          finalScore: final,
+          textScore,
+          voiceScore,
+          faceScore,
+          emotion,
+          riskLevel,
+          summary,
+          suggestions,
+          details,
+        })
+        setBlogStatus(null)
+        setBlogGenerating(false)
+        setPhase("results")
+      }, 1700)
+    } catch (error) {
+      console.error("endSession failed:", error)
+      alert(error instanceof Error ? error.message : "Could not end session")
+      setPhase("session")
+    }
   }
 
   const reset = () => {
@@ -411,9 +584,48 @@ export default function MoodTrackingPage() {
     setHasVideo(false)
     setMsgs([])
     setResult(null)
-    setQuestionIndex(0)
+    setCurrentPrompt(INITIAL_INTERVIEW_PROMPT)
     setResponseCount(0)
+    setBackendSessionId(null)
     setIsRecording(false)
+    setBlogStatus(null)
+    setBlogGenerating(false)
+  }
+
+  const handleGenerateBlog = async () => {
+    if (!token) {
+      alert("Please login first")
+      return
+    }
+
+    const targetSessionId = result?.sessionId || backendSessionId
+    if (!targetSessionId) {
+      alert("Session id is missing. Please start a new session.")
+      return
+    }
+
+    setBlogGenerating(true)
+    setBlogStatus(null)
+
+    try {
+      const response = await requestWithFallback<{ message?: string; error?: string }>("/api/student/generate-blog", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          sessions_id: [targetSessionId],
+        }),
+      })
+
+      setBlogStatus(response.message || "Blog generated successfully")
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not generate blog"
+      setBlogStatus(message)
+    } finally {
+      setBlogGenerating(false)
+    }
   }
 
   useEffect(() => {
@@ -432,15 +644,25 @@ export default function MoodTrackingPage() {
         {phase === "landing"   && <LandingView key="landing" onStart={startSession} />}
         {phase === "analyzing" && <AnalyzingView key="analyzing" analyzeStep={analyzeStep} />}
         {phase === "results" && result && (
-          <ResultsView key="results" result={result} elapsed={elapsed} responseCount={responseCount} onReset={reset} />
+          <ResultsView
+            key="results"
+            result={result}
+            elapsed={elapsed}
+            responseCount={responseCount}
+            onReset={reset}
+            onGenerateBlog={handleGenerateBlog}
+            onOpenBlogs={() => router.push("/blogs")}
+            blogGenerating={blogGenerating}
+            blogStatus={blogStatus}
+          />
         )}
         {phase === "session" && (
           <SessionView
             key="session"
             elapsed={elapsed}
-            currentQuestion={Math.min(questionIndex + 1, INTERVIEW_QUESTIONS.length)}
-            totalQuestions={INTERVIEW_QUESTIONS.length}
-            questionText={INTERVIEW_QUESTIONS[questionIndex] || "Session complete"}
+            currentQuestion={responseCount + 1}
+            totalQuestions={Math.max(1, responseCount + 1)}
+            questionText={currentPrompt}
             isRecording={isRecording}
             transcriptDraft={transcript}
             onTranscriptChange={() => {}}

@@ -1,6 +1,6 @@
 "use client"
 import { motion } from "framer-motion"
-import { RotateCcw, CheckCircle2, Activity, AlertCircle, TrendingUp, TrendingDown, Sparkles } from "lucide-react"
+import { RotateCcw, CheckCircle2, Activity, AlertCircle, TrendingUp, TrendingDown, Sparkles, NotebookPen } from "lucide-react"
 import { MoodResult } from "./types"
 import { fmt } from "./utils"
 import { ScoreArc } from "./ScoreArc"
@@ -10,12 +10,18 @@ interface ResultsViewProps {
   elapsed: number
   responseCount: number
   onReset: () => void
+  onGenerateBlog?: () => void
+  onOpenBlogs?: () => void
+  blogGenerating?: boolean
+  blogStatus?: string | null
 }
 
 const EMOTION_HINT: Record<string, { icon: string; text: string }> = {
   Calm: { icon: "😌", text: "Relaxed and centred energy" },
   Anxious: { icon: "😟", text: "Some tension detected" },
   Stressed: { icon: "😰", text: "Elevated stress markers" },
+  Negative: { icon: "😞", text: "High emotional strain detected" },
+  Depressed: { icon: "😔", text: "Low mood indicators detected" },
   Hopeful: { icon: "🙂", text: "Positive emotional energy" },
   Reflective: { icon: "🤔", text: "Thoughtful, introspective" },
 }
@@ -47,9 +53,44 @@ const RISK_STYLE = {
   },
 } as const
 
-export function ResultsView({ result, elapsed, responseCount, onReset }: ResultsViewProps) {
-  const emotion = EMOTION_HINT[result.emotion] || { icon: "🙂", text: "Steady, balanced state" }
+export function ResultsView({
+  result,
+  elapsed,
+  responseCount,
+  onReset,
+  onGenerateBlog,
+  onOpenBlogs,
+  blogGenerating = false,
+  blogStatus = null,
+}: ResultsViewProps) {
+  const emotion = EMOTION_HINT[result.emotion] || { icon: "🙂", text: "Emotion detected from your session" }
   const risk = RISK_STYLE[result.riskLevel]
+  const details = result.details
+
+  const scaleScore = (value: number) => {
+    const v = Number(value)
+    if (!Number.isFinite(v)) return 0
+    return Math.round(Math.abs(v) * 100)
+  }
+
+  const detailsDurationLabel = (() => {
+    if (details?.startedAt && details?.endedAt) {
+      const start = new Date(details.startedAt).getTime()
+      const end = new Date(details.endedAt).getTime()
+      if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+        const mins = (end - start) / 60000
+        return mins < 1 ? `${Math.round(mins * 60)} sec` : `${Math.round(mins * 10) / 10} min`
+      }
+    }
+    if (details?.sessionDuration) return `${details.sessionDuration} min`
+    return "-"
+  })()
+  const toBarWidth = (value: number) => {
+    const v = Math.abs(Number(value))
+    if (!Number.isFinite(v)) return 0
+    if (v >= 0 && v <= 1) return Math.max(0, Math.min(100, v * 100))
+    return Math.max(0, Math.min(100, v))
+  }
 
   return (
     <div className="w-full min-h-full overflow-auto bg-linear-to-b from-white to-orange-50/30">
@@ -70,11 +111,53 @@ export function ResultsView({ result, elapsed, responseCount, onReset }: Results
               {fmt(elapsed)} · {responseCount} responses captured
             </p>
           </div>
-          <motion.button whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }} onClick={onReset}
-            className="flex items-center gap-2 rounded-xl px-4 py-2 text-sm"
-            style={{ border: "1px solid #e5e7eb", background: "rgba(255,255,255,0.85)", backdropFilter: "blur(8px)", cursor: "pointer", color: "#374151", fontFamily: "inherit", fontWeight: 600 }}>
-            <RotateCcw size={12} />New session
-          </motion.button>
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex items-center gap-2">
+              {onGenerateBlog ? (
+                <motion.button
+                  whileHover={{ scale: 1.01 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={onGenerateBlog}
+                  disabled={blogGenerating}
+                  className="flex items-center gap-2 rounded-xl px-4 py-2 text-sm"
+                  style={{
+                    border: "1px solid #fed7aa",
+                    background: "rgba(255,247,237,0.95)",
+                    backdropFilter: "blur(8px)",
+                    cursor: blogGenerating ? "not-allowed" : "pointer",
+                    color: "#9a3412",
+                    fontFamily: "inherit",
+                    fontWeight: 600,
+                    opacity: blogGenerating ? 0.7 : 1,
+                  }}
+                >
+                  <NotebookPen size={12} />
+                  {blogGenerating ? "Generating..." : "Generate Blog"}
+                </motion.button>
+              ) : null}
+
+              <motion.button whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }} onClick={onReset}
+                className="flex items-center gap-2 rounded-xl px-4 py-2 text-sm"
+                style={{ border: "1px solid #e5e7eb", background: "rgba(255,255,255,0.85)", backdropFilter: "blur(8px)", cursor: "pointer", color: "#374151", fontFamily: "inherit", fontWeight: 600 }}>
+                <RotateCcw size={12} />New session
+              </motion.button>
+            </div>
+
+            {blogStatus ? (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-emerald-700">{blogStatus}</span>
+                {onOpenBlogs ? (
+                  <button
+                    type="button"
+                    onClick={onOpenBlogs}
+                    className="text-xs font-semibold text-orange-600 hover:text-orange-700"
+                  >
+                    View Blogs
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         </div>
 
         {/* ── Top 3 cards ── */}
@@ -145,7 +228,7 @@ export function ResultsView({ result, elapsed, responseCount, onReset }: Results
               </div>
               <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: track }}>
                 <motion.div className="h-full rounded-full" style={{ background: color }}
-                  initial={{ width: 0 }} animate={{ width: `${val}%` }}
+                  initial={{ width: 0 }} animate={{ width: `${toBarWidth(val)}%` }}
                   transition={{ duration: 1.2, delay: 0.5, ease: [0.34, 1.56, 0.64, 1] }} />
               </div>
               <div className="flex items-center gap-1 mt-2">
@@ -187,6 +270,102 @@ export function ResultsView({ result, elapsed, responseCount, onReset }: Results
             </ol>
           </motion.div>
         </div>
+
+        {details && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.48 }}
+            className="mt-4 rounded-2xl p-6"
+            style={{ border: "1px solid #f3f4f6", background: "linear-gradient(160deg, #fff 0%, #fffaf4 100%)", boxShadow: "0 10px 26px rgba(234, 88, 12, 0.08)" }}
+          >
+            <div className="mb-4 flex items-center justify-between gap-4">
+              <span style={{ fontSize: 10, fontWeight: 700, color: "#f97316", letterSpacing: "0.1em", textTransform: "uppercase" }}>
+                Full session details
+              </span>
+              <span style={{ fontSize: 12, color: "#6b7280" }}>
+                Session #{details.id.slice(-6)}
+              </span>
+            </div>
+
+            <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-4">
+              {[
+                { label: "Status", value: details.status },
+                { label: "Duration", value: detailsDurationLabel },
+                { label: "Messages", value: String(details.messagesCount) },
+                { label: "Final score", value: `${scaleScore(details.finalScore)}` },
+              ].map((item) => (
+                <div key={item.label} className="rounded-xl px-3 py-2" style={{ border: "1px solid #fed7aa", background: "linear-gradient(180deg, #fff 0%, #fff7ed 100%)" }}>
+                  <p style={{ fontSize: 10, color: "#f97316", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>
+                    {item.label}
+                  </p>
+                  <p style={{ fontSize: 14, color: "#111827", fontWeight: 600, marginTop: 2 }}>{item.value}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="max-h-95 overflow-auto rounded-xl" style={{ border: "1px solid #fed7aa", background: "#fff", boxShadow: "inset 0 1px 0 rgba(255,255,255,0.9)" }}>
+              <table className="w-full min-w-170">
+                <thead>
+                  <tr style={{ background: "linear-gradient(180deg, #fff7ed 0%, #ffedd5 100%)" }}>
+                    {[
+                      "User message",
+                      "Emotion",
+                      "Text",
+                      "Voice",
+                      "Face",
+                      "Final",
+                      "AI reply",
+                    ].map((head) => (
+                      <th
+                        key={head}
+                        style={{
+                          fontSize: 11,
+                          textAlign: "left",
+                          color: "#6b7280",
+                          fontWeight: 700,
+                          letterSpacing: "0.06em",
+                          textTransform: "uppercase",
+                          padding: "10px 12px",
+                          borderBottom: "1px solid #fed7aa",
+                        }}
+                      >
+                        {head}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {details.messages.map((m, i) => (
+                    <tr key={`${m.timestamp || i}-${i}`} style={{ background: i % 2 === 0 ? "#fff" : "#fffaf5" }}>
+                      <td style={{ padding: "12px", borderBottom: "1px solid #ffedd5", fontSize: 12, color: "#111827", maxWidth: 260, lineHeight: 1.6 }}>
+                        {m.userMessage || "-"}
+                      </td>
+                      <td style={{ padding: "12px", borderBottom: "1px solid #ffedd5", fontSize: 12, color: "#92400e", fontWeight: 600 }}>
+                        {m.emotion || "neutral"}
+                      </td>
+                      <td style={{ padding: "12px", borderBottom: "1px solid #ffedd5", fontSize: 12, color: "#111827" }}>
+                        {scaleScore(m.textScore || 0)}
+                      </td>
+                      <td style={{ padding: "12px", borderBottom: "1px solid #ffedd5", fontSize: 12, color: "#111827" }}>
+                        {scaleScore(m.voiceScore || 0)}
+                      </td>
+                      <td style={{ padding: "12px", borderBottom: "1px solid #ffedd5", fontSize: 12, color: "#111827" }}>
+                        {scaleScore(m.faceScore || 0)}
+                      </td>
+                      <td style={{ padding: "12px", borderBottom: "1px solid #ffedd5", fontSize: 12, color: "#111827", fontWeight: 700 }}>
+                        {scaleScore(m.finalScore || 0)}
+                      </td>
+                      <td style={{ padding: "12px", borderBottom: "1px solid #ffedd5", fontSize: 12, color: "#374151", maxWidth: 320, lineHeight: 1.6, whiteSpace: "normal", wordBreak: "break-word" }}>
+                        {m.aiResponse || "-"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </motion.div>
+        )}
       </motion.div>
     </div>
   )
