@@ -1,6 +1,7 @@
 import Session from "../models/session.js";
 import CryptoJS from "crypto-js";
 import Student from "../models/Student.js";
+import { getFinalAIResponse } from "../services/aiService.js";
 
 // Weights for final score (can be set via env: WEIGHT_TEXT, WEIGHT_VOICE, WEIGHT_FACE)
 let W_TEXT = typeof process.env.WEIGHT_TEXT !== "undefined" ? Number(process.env.WEIGHT_TEXT) : 0.6;
@@ -39,10 +40,11 @@ export const startSession = async (req, res) => {
 const encrypt = (text) => {
   return CryptoJS.AES.encrypt(text, process.env.SECRET_KEY).toString();
 };
+// controllers/session.js
 
 export const sendMessage = async (req, res) => {
   try {
-    const { sessionId, message } = req.body;
+    const { sessionId, message, studentData } = req.body;
 
     // 1️⃣ Find session
     const session = await Session.findById(sessionId);
@@ -50,59 +52,55 @@ export const sendMessage = async (req, res) => {
       return res.status(404).json({ msg: "Session not found" });
     }
 
-    const aiResponse = {};
-    // // 2️⃣ Call Cloud AI API
-    // const aiResponse = await axios.post(
-    //   process.env.CLOUD_AI_ENDPOINT,
-    //   { text: message }
-    // );
+    // 2️⃣ Call AI Service (🔥 MAIN CHANGE)
+    const aiResult = await getFinalAIResponse({
+      message,
+      studentData,
+    });
 
-    const data = aiResponse?.data || {
-      reply: "Sorry, I couldn't analyze that.",
-      textScore: 0,
-      emotion: "neutral",
-      voiceScore: 0,
-      faceScore: 0
-    };
+    console.log("AI Result:", aiResult);
 
-    // Example response from cloud:
-    // {
-    //   reply: "You seem stressed",
-    //   textScore: -0.6,
-    //   emotion: "sad",
-    //   voiceScore: 0,
-    //   faceScore: 0
-    // }
+    if (!aiResult.success) {
+      return res.status(500).json({ msg: "AI processing failed" });
+    }
 
-    // 3️⃣ Calculate final score using configurable weights
-    const textScore = typeof data.textScore !== "undefined" ? data.textScore : 0;
-    const voiceScore = typeof data.voiceScore !== "undefined" ? data.voiceScore : 0;
-    const faceScore = typeof data.faceScore !== "undefined" ? data.faceScore : 0;
+    const data = aiResult.data;
 
+    // 3️⃣ Prepare scores (fallback safe)
+    const textScore = data.confidence || 0;   // from emotion model
+    const voiceScore = 0;
+    const faceScore = 0;
+
+    // 4️⃣ Calculate final score
     const finalScore =
-      W_TEXT * textScore + W_VOICE * voiceScore + W_FACE * faceScore;
+      W_TEXT * textScore +
+      W_VOICE * voiceScore +
+      W_FACE * faceScore;
 
-    // 4️⃣ Save message
+    // 5️⃣ Save message in DB
     session.messages.push({
       userMessage: encrypt(message),
       aiResponse: data.reply,
-      textScore: data.textScore,
-      voiceScore: data.voiceScore || 0,
-      faceScore: data.faceScore || 0,
+      textScore,
+      voiceScore,
+      faceScore,
       finalScore,
-      emotion: data.emotion,
+      emotion: data.finalEmotion,
     });
 
     await session.save();
 
-    // 5️⃣ Send response
+    // 6️⃣ Send response
     res.status(200).json({
       reply: data.reply,
-      emotion: data.emotion,
+      emotion: data.finalEmotion,
       score: finalScore,
+      riskLevel: data.riskLevel,
+      action: data.action,
     });
 
   } catch (error) {
+    console.error("SendMessage Error:", error.message);
     res.status(500).json({ error: error.message });
   }
 };
