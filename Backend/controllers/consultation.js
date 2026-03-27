@@ -147,6 +147,24 @@ export const getStudentCurrentConsultations = async (req, res) => {
   }
 };
 
+export const getStudentConsultationHistory = async (req, res) => {
+  try {
+    const consultations = await Consultation.find({
+      studentEmail: req.user.email,
+    })
+      .sort({ updatedAt: -1 })
+      .populate("doctorId", "name specialization experience consultationFee rating city")
+      .lean();
+
+    res.status(200).json({
+      message: "Consultation history fetched successfully",
+      consultations,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 export const getStudentStreamToken = async (req, res) => {
   try {
     const { consultationId } = req.params;

@@ -186,19 +186,6 @@ export default function MoodTrackingPage() {
 
   const handleVideoReady = useCallback(() => setHasVideo(true), [])
 
-  // ── stream lifecycle ──────────────────────────────────────────────────────
-  /**
-   * CRITICAL FIX — camera stays on bug:
-   *
-   * Two things are required to turn off the OS camera indicator:
-   *   1. Call track.stop() on every MediaStreamTrack
-   *   2. Set video.srcObject = null
-   *
-   * Step 2 is essential. Even after tracks are stopped, the browser keeps the
-   * hardware device reserved as long as any HTMLVideoElement still holds a
-   * reference to the stream via srcObject. Clearing it releases the device
-   * immediately and the OS indicator turns off.
-   */
   const releaseTracks = useCallback(() => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop())
