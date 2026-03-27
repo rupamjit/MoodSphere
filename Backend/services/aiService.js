@@ -30,7 +30,7 @@ export const getFinalAIResponse = async ({
         form.append("image", fs.createReadStream(imagePath));
 
         const imageRes = await axios.post(
-          "http://127.0.0.1:5000/detect-emotion",
+          "http://127.0.0.1:6000/detect-emotion",
           form,
           { headers: form.getHeaders() }
         );
@@ -53,7 +53,7 @@ export const getFinalAIResponse = async ({
 
     // 🔹 4. Call Chat API with BOTH emotions
     const chatRes = await axios.post(
-      "http://127.0.0.1:5000/api/chat",
+      "http://127.0.0.1:6000/api/chat",
       {
         student_data: {
           ...studentData,
@@ -132,7 +132,7 @@ export const getFinalAIResponse = async ({
         finalEmotion: "neutral",
         confidence: 0,
         riskLevel: "unknown",
-        reply: fallbackReplyByEmotion("neutral"),
+        reply: "I'm sorry, I'm having trouble understanding right now. Can you tell me more?",
         action: "none",
         modelEmotion: "neutral",
         studentContext: studentData || {},

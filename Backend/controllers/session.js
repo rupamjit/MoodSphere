@@ -349,6 +349,53 @@ export const getSessionDetails = async (req, res) => {
 };
 
 
+export const getStudentSessionHistory = async (req, res) => {
+  try {
+    const sessions = await Session.find({ studentId: req.user.id })
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    const history = sessions.map((session) => {
+      const messages = session.messages || [];
+      const lastMessage = messages.length ? messages[messages.length - 1] : null;
+
+      const startedAtMs = session.startedAt ? new Date(session.startedAt).getTime() : NaN;
+      const endedAtMs = session.endedAt ? new Date(session.endedAt).getTime() : NaN;
+
+      const durationMinutes = Number.isFinite(startedAtMs) && Number.isFinite(endedAtMs)
+        ? Math.max(1, Math.round((endedAtMs - startedAtMs) / (1000 * 60)))
+        : session.sessionDuration || 0;
+
+      return {
+        id: session._id,
+        startedAt: session.startedAt,
+        endedAt: session.endedAt,
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt,
+        status: session.status || "active",
+        sessionDuration: session.sessionDuration || durationMinutes,
+        durationMinutes,
+        finalMood: session.finalMood || "neutral",
+        finalScore: session.finalScore || 0,
+        riskLevel: session.riskLevel || "low",
+        averageTextScore: session.averageTextScore || 0,
+        averageVoiceScore: session.averageVoiceScore || 0,
+        averageFaceScore: session.averageFaceScore || 0,
+        messagesCount: messages.length,
+        lastAiResponse: lastMessage?.aiResponse || "",
+        lastStudentMessage: lastMessage?.userMessage ? decrypt(lastMessage.userMessage) : "",
+      };
+    });
+
+    return res.status(200).json({
+      success: true,
+      sessions: history,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
+
 
 
 

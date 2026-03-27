@@ -63,9 +63,11 @@ def predict():
                 "confidence": float(np.max(predictions[i]))
             })
 
+        print("Predictions:", results)
         return jsonify(results)
 
     except Exception as e:
+        print("Error during prediction:", str(e))
         return jsonify({"error": str(e)})
 
 # ==============================
