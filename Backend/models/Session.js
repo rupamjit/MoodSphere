@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 
 
-// 🔹 Each message inside session
+//  Each message inside session
 const messageSchema = new mongoose.Schema({
   userMessage: {
     type: String,
@@ -101,4 +101,4 @@ const sessionSchema = new mongoose.Schema(
   }
 );
 
-export default mongoose.model("Session", sessionSchema);
+export default mongoose.models.Session || mongoose.model("Session", sessionSchema);

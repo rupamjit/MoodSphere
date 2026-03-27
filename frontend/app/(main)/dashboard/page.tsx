@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type ComponentType } from "react"
 import { useRouter } from "next/navigation"
-import { format, startOfDay, subDays } from "date-fns"
+import { format } from "date-fns"
 import {
   ArrowUpRight,
   BookOpen,
@@ -30,6 +30,58 @@ import { useAuth } from "@/components/auth/auth-context"
 type Tone = "orange" | "emerald" | "violet" | "sky"
 type CalTone = "empty" | "low" | "mid" | "high" | "today"
 
+type DashboardTrendPoint = {
+  date: string
+  score: number
+  hasData: boolean
+}
+
+type DashboardOverview = {
+  profile: {
+    name: string
+    currentMood: string
+    moodScore: number
+    riskLevel: "low" | "medium" | "high"
+  }
+  stats: {
+    moodScore: number
+    weeklyDelta: number
+    currentRisk: "low" | "medium" | "high"
+    completedSessionsThisMonth: number
+    consistency: number
+    currentStreak: number
+  }
+  trend: {
+    period: "7d" | "30d"
+    points: DashboardTrendPoint[]
+  }
+  streak: {
+    currentStreak: number
+    calendar: {
+      year: number
+      month: number
+      monthLabel: string
+      days: Array<{
+        day: number
+        score: number
+        level: CalTone
+        hasData: boolean
+      }>
+    }
+  }
+  patternRecognition: {
+    nodes: PatternNode[]
+    insight: string
+  }
+  recentSessions: Array<{
+    mood: string
+    score: number
+    risk: "low" | "medium" | "high"
+    time: string
+  }>
+  aiTips: string[]
+}
+
 type PatternNode = {
   label: string
   pct: number
@@ -37,18 +89,18 @@ type PatternNode = {
   emoji: string
 }
 
-const recentSessions = [
+const fallbackRecentSessions = [
   { time: "Today • 9:10 AM", mood: "Focused", score: 78, risk: "low" },
   { time: "Yesterday • 8:42 PM", mood: "Calm", score: 72, risk: "low" },
   { time: "Mar 24 • 2:15 PM", mood: "Reflective", score: 66, risk: "medium" },
 ]
 
-const aiTips = [
+const fallbackAiTips = [
   "You are most stable in the morning. Keep check-ins before class.",
   "Short breaks after heavy study blocks improve your scores.",
 ]
 
-const calCells: CalTone[] = [
+const fallbackCalCells: CalTone[] = [
   "high", "mid", "low", "mid", "high", "mid", "high",
   "high", "today", "mid", "high", "low", "mid", "high",
   "mid", "high", "mid", "low", "mid", "high", "mid",
@@ -57,7 +109,7 @@ const calCells: CalTone[] = [
   "empty", "empty", "empty", "empty", "empty", "empty", "empty",
 ]
 
-const patternNodes: PatternNode[] = [
+const fallbackPatternNodes: PatternNode[] = [
   { label: "Focus", pct: 82, color: "#EA580C", emoji: "🎯" },
   { label: "Calm", pct: 74, color: "#FB923C", emoji: "😌" },
   { label: "Energy", pct: 69, color: "#F59E0B", emoji: "⚡" },
@@ -65,21 +117,113 @@ const patternNodes: PatternNode[] = [
   { label: "Sleep", pct: 61, color: "#C2410C", emoji: "😴" },
 ]
 
-const scanSeries30 = [
-  56, 58, 60, 59, 62, 64, 63, 65, 64, 66,
-  67, 65, 68, 69, 66, 68, 70, 72, 71, 73,
-  74, 72, 71, 73, 74, 76, 75, 76, 77, 78,
-]
+const fallbackPatternInsight =
+  "Focus and Calm are dominant today, while Stress remains below baseline."
+
+const API_CANDIDATES = [
+  process.env.NEXT_PUBLIC_BACKEND_URL?.trim(),
+  "http://localhost:5005",
+].filter((v): v is string => Boolean(v))
+
+const capitalize = (value: string) =>
+  value ? value.charAt(0).toUpperCase() + value.slice(1) : value
+
+const formatSessionTime = (value: string) => {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+
+  const now = new Date()
+  const todayKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`
+  const dateKey = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`
+
+  if (todayKey === dateKey) {
+    return `Today • ${format(date, "h:mm a")}`
+  }
+
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  const yesterdayKey = `${yesterday.getFullYear()}-${yesterday.getMonth()}-${yesterday.getDate()}`
+  if (yesterdayKey === dateKey) {
+    return `Yesterday • ${format(date, "h:mm a")}`
+  }
+
+  return format(date, "MMM dd • h:mm a")
+}
 
 export default function DashboardPage() {
   const router = useRouter()
-  const { user, loading, logout } = useAuth()
+  const { user, loading, logout, token } = useAuth()
+  const [chartMode, setChartMode] = useState<"7d" | "30d">("30d")
+  const [dashboard, setDashboard] = useState<DashboardOverview | null>(null)
+  const [dashboardLoading, setDashboardLoading] = useState(false)
+  const [dashboardError, setDashboardError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!loading && !user) {
       router.replace("/login")
     }
   }, [loading, user, router])
+
+  useEffect(() => {
+    const fetchDashboard = async () => {
+      if (!user || !token) return
+
+      setDashboardLoading(true)
+      setDashboardError(null)
+
+      try {
+        let response: Response | null = null
+        let data: unknown = null
+        let lastError: unknown = null
+
+        for (const base of API_CANDIDATES) {
+          try {
+            const candidateResponse = await fetch(
+              `${base}/api/student/dashboard/overview?period=${chartMode}`,
+              {
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${token}`,
+                },
+              }
+            )
+
+            const candidateData = await candidateResponse.json().catch(() => ({}))
+
+            if (!candidateResponse.ok) {
+              response = candidateResponse
+              data = candidateData
+              continue
+            }
+
+            response = candidateResponse
+            data = candidateData
+            break
+          } catch (error) {
+            lastError = error
+          }
+        }
+
+        if (!response || !response.ok) {
+          if (response) {
+            const safeData = (data as { message?: string }) || {}
+            throw new Error(safeData.message || "Dashboard API request failed")
+          }
+          throw lastError instanceof Error
+            ? lastError
+            : new Error("Unable to reach backend API. Check backend server/port.")
+        }
+
+        setDashboard(data as DashboardOverview)
+      } catch (error) {
+        setDashboardError(error instanceof Error ? error.message : "Failed to fetch dashboard")
+      } finally {
+        setDashboardLoading(false)
+      }
+    }
+
+    fetchDashboard()
+  }, [user, token, chartMode])
 
   if (loading || !user) {
     return (
@@ -89,6 +233,16 @@ export default function DashboardPage() {
     )
   }
 
+  const recentSessions = dashboard?.recentSessions?.length
+    ? dashboard.recentSessions.map((session) => ({
+        ...session,
+        risk: session.risk,
+        time: formatSessionTime(session.time),
+      }))
+    : fallbackRecentSessions
+
+  const aiTips = dashboard?.aiTips?.length ? dashboard.aiTips : fallbackAiTips
+
   return (
     <main className="min-h-screen bg-background px-4 py-6 md:px-6 md:py-7">
       <div className="mx-auto w-full max-w-6xl space-y-4">
@@ -97,7 +251,9 @@ export default function DashboardPage() {
             <div>
               <Badge className="mb-2 border-orange-200 bg-white text-orange-700">Student wellness dashboard</Badge>
               <h1 className="text-2xl font-semibold tracking-tight text-foreground">Welcome back, {user.name}</h1>
-              <p className="mt-1 text-sm text-muted-foreground">You are on an 18-day streak. Keep your rhythm steady today.</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                You are on a {dashboard?.stats.currentStreak ?? 18}-day streak. Keep your rhythm steady today.
+              </p>
             </div>
             <div className="flex gap-2">
               <Button size="sm" onClick={() => router.push("/mood-tracking")}>
@@ -110,16 +266,57 @@ export default function DashboardPage() {
         </section>
 
         <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <StatTile title="Mood score" value="78/100" subtitle="+6 from last week" icon={HeartPulse} tone="orange" />
-          <StatTile title="Current risk" value="Low" subtitle="stable trend" icon={ShieldAlert} tone="emerald" />
-          <StatTile title="Completed sessions" value="62" subtitle="this month" icon={BookOpen} tone="violet" />
-          <StatTile title="Consistency" value="89%" subtitle="excellent" icon={TrendingUp} tone="sky" />
+          <StatTile
+            title="Mood score"
+            value={`${dashboard?.stats.moodScore ?? 78}/100`}
+            subtitle={`${(dashboard?.stats.weeklyDelta ?? 6) >= 0 ? "+" : ""}${dashboard?.stats.weeklyDelta ?? 6} from last week`}
+            icon={HeartPulse}
+            tone="orange"
+          />
+          <StatTile
+            title="Current risk"
+            value={capitalize(dashboard?.stats.currentRisk ?? "low")}
+            subtitle="stable trend"
+            icon={ShieldAlert}
+            tone="emerald"
+          />
+          <StatTile
+            title="Completed sessions"
+            value={`${dashboard?.stats.completedSessionsThisMonth ?? 62}`}
+            subtitle="this month"
+            icon={BookOpen}
+            tone="violet"
+          />
+          <StatTile
+            title="Consistency"
+            value={`${dashboard?.stats.consistency ?? 89}%`}
+            subtitle="excellent"
+            icon={TrendingUp}
+            tone="sky"
+          />
         </section>
 
         <section className="grid gap-3 lg:grid-cols-2">
-          <PatternRecognitionCard />
-          <DailyStreakCard />
+          <PatternRecognitionCard
+            chartMode={chartMode}
+            onChartModeChange={setChartMode}
+            trendPoints={dashboard?.trend.points ?? []}
+            moodScore={dashboard?.stats.moodScore ?? 78}
+            patternNodes={dashboard?.patternRecognition?.nodes ?? fallbackPatternNodes}
+            patternInsight={dashboard?.patternRecognition?.insight ?? fallbackPatternInsight}
+            isLoading={dashboardLoading}
+          />
+          <DailyStreakCard
+            calendar={dashboard?.streak.calendar}
+            currentStreak={dashboard?.streak.currentStreak ?? 18}
+          />
         </section>
+
+        {dashboardError ? (
+          <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+            Failed to load dashboard API data: {dashboardError}
+          </div>
+        ) : null}
 
         <section className="grid gap-3 lg:grid-cols-[1.5fr_1fr]">
           <Card>
@@ -136,7 +333,7 @@ export default function DashboardPage() {
                   </div>
                   <div className="text-right">
                     <p className="text-sm font-semibold">{session.score}</p>
-                    <p className="text-xs text-muted-foreground">{session.risk}</p>
+                    <p className="text-xs text-muted-foreground">{capitalize(session.risk)}</p>
                   </div>
                 </div>
               ))}
@@ -181,44 +378,42 @@ export default function DashboardPage() {
   )
 }
 
-function PatternRecognitionCard() {
-  const [chartMode, setChartMode] = useState<"7d" | "30d">("30d")
+function PatternRecognitionCard({
+  chartMode,
+  onChartModeChange,
+  trendPoints,
+  moodScore,
+  patternNodes,
+  patternInsight,
+  isLoading,
+}: {
+  chartMode: "7d" | "30d"
+  onChartModeChange: (mode: "7d" | "30d") => void
+  trendPoints: DashboardTrendPoint[]
+  moodScore: number
+  patternNodes: PatternNode[]
+  patternInsight: string
+  isLoading: boolean
+}) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
 
-  const scoreByDate = useMemo(() => {
-    const map = new Map<string, number>()
-    const today = startOfDay(new Date())
-
-    scanSeries30.forEach((score, idx) => {
-      const d = subDays(today, scanSeries30.length - 1 - idx)
-      map.set(format(d, "yyyy-MM-dd"), score)
-    })
-
-    return map
-  }, [])
-
-  // Calculate chart data based on mode
   const chartData = useMemo(() => {
-    const today = startOfDay(new Date())
-    let daysCount = 30
+    return (trendPoints || []).map((point) => {
+      const date = new Date(point.date)
+      const safeDate = Number.isNaN(date.getTime()) ? new Date() : date
 
-    if (chartMode === "7d") {
-      daysCount = 7
-    }
-
-    const data = []
-    for (let i = daysCount - 1; i >= 0; i--) {
-      const d = subDays(today, i)
-      const key = format(d, "yyyy-MM-dd")
-      const score = scoreByDate.get(key) || 0
-      data.push({ date: d, score, label: format(d, "MMM dd") })
-    }
-    return data
-  }, [chartMode, scoreByDate])
+      return {
+        date: safeDate,
+        score: point.score,
+        label: format(safeDate, "MMM dd"),
+      }
+    })
+  }, [trendPoints])
 
   const maxScore = Math.max(...chartData.map(d => d.score), 100)
   const minScore = Math.min(...chartData.map(d => d.score), 0)
   const range = maxScore - minScore || 1
+  const divisor = Math.max(chartData.length - 1, 1)
 
   const P = {
     orange: "#EA580C",
@@ -243,13 +438,13 @@ function PatternRecognitionCard() {
           <div className="rounded-lg border border-orange-200 bg-orange-50/50 p-3">
             <div className="mb-2 flex items-center justify-between">
               <span className="text-xs font-medium text-muted-foreground">Mood</span>
-              <span className="text-xs font-semibold text-orange-700">78% healthy</span>
+              <span className="text-xs font-semibold text-orange-700">{moodScore}% healthy</span>
             </div>
             <div className="relative h-2 rounded-full bg-orange-100">
               <motion.div
                 className="h-2 rounded-full bg-orange-600"
                 initial={{ width: 0 }}
-                whileInView={{ width: "78%" }}
+                whileInView={{ width: `${moodScore}%` }}
                 viewport={{ once: true }}
                 transition={{ duration: 0.5 }}
               />
@@ -258,7 +453,8 @@ function PatternRecognitionCard() {
           <div className="rounded-lg border border-orange-200 bg-white p-3">
             <div className="mb-1 text-xs text-muted-foreground">Signal state</div>
             <div className="flex items-center gap-2 text-sm font-medium text-orange-700">
-              <span className="h-2 w-2 rounded-full bg-orange-500" /> Stable scan
+              <span className="h-2 w-2 rounded-full bg-orange-500" />
+              {moodScore >= 65 ? "Stable scan" : "Needs attention"}
             </div>
           </div>
         </div>
@@ -275,7 +471,7 @@ function PatternRecognitionCard() {
 
         <div className="rounded-lg border border-orange-100 bg-orange-50/30 px-3 py-2">
           <p className="text-[11px] text-muted-foreground">
-            Focus and Calm are dominant today, while Stress remains below baseline.
+            {patternInsight}
           </p>
         </div>
 
@@ -290,7 +486,7 @@ function PatternRecognitionCard() {
               <Button
                 size="sm"
                 variant={chartMode === "7d" ? "default" : "outline"}
-                onClick={() => setChartMode("7d")}
+                onClick={() => onChartModeChange("7d")}
                 className="h-8 px-4 text-sm font-semibold"
               >
                 7D
@@ -298,7 +494,7 @@ function PatternRecognitionCard() {
               <Button
                 size="sm"
                 variant={chartMode === "30d" ? "default" : "outline"}
-                onClick={() => setChartMode("30d")}
+                onClick={() => onChartModeChange("30d")}
                 className="h-8 px-4 text-sm font-semibold"
               >
                 30D
@@ -362,7 +558,7 @@ function PatternRecognitionCard() {
                   points={
                     chartData
                       .map((d, i) => {
-                        const x = 80 + (i / (chartData.length - 1)) * 1060
+                        const x = 80 + (i / divisor) * 1060
                         const y = 380 - ((d.score - minScore) / range) * 360
                         return `${x},${y}`
                       })
@@ -377,7 +573,7 @@ function PatternRecognitionCard() {
                 <polyline
                   points={chartData
                     .map((d, i) => {
-                      const x = 80 + (i / (chartData.length - 1)) * 1060
+                      const x = 80 + (i / divisor) * 1060
                       const y = 380 - ((d.score - minScore) / range) * 360
                       return `${x},${y}`
                     })
@@ -392,7 +588,7 @@ function PatternRecognitionCard() {
 
                 {/* Data points - larger */}
                 {chartData.map((d, i) => {
-                  const x = 80 + (i / (chartData.length - 1)) * 1060
+                  const x = 80 + (i / divisor) * 1060
                   const y = 380 - ((d.score - minScore) / range) * 360
                   const isHovered = hoveredIndex === i
                   return (
@@ -413,7 +609,7 @@ function PatternRecognitionCard() {
                 
                 {/* Tooltips rendered LAST so they appear on top */}
                 {chartData.map((d, i) => {
-                  const x = 80 + (i / (chartData.length - 1)) * 1060
+                  const x = 80 + (i / divisor) * 1060
                   const y = 380 - ((d.score - minScore) / range) * 360
                   const isHovered = hoveredIndex === i
                   return isHovered ? (
@@ -456,6 +652,10 @@ function PatternRecognitionCard() {
             )}
           </svg>
 
+          {isLoading ? (
+            <p className="mt-2 text-xs text-muted-foreground">Updating trend from API...</p>
+          ) : null}
+
           <div className="mt-4 flex items-center justify-between text-sm text-muted-foreground">
             <span className="font-medium">✨ Hover over points to see daily scores</span>
             <span className="rounded-full bg-orange-100 px-3 py-1 font-semibold text-orange-700">Range: {minScore} - {maxScore}</span>
@@ -466,7 +666,13 @@ function PatternRecognitionCard() {
   )
 }
 
-function DailyStreakCard() {
+function DailyStreakCard({
+  calendar,
+  currentStreak,
+}: {
+  calendar?: DashboardOverview["streak"]["calendar"]
+  currentStreak: number
+}) {
   const P = {
     orange: "#EA580C",
     peach: "#FB923C",
@@ -510,6 +716,38 @@ function DailyStreakCard() {
     }
   }
 
+  const monthLabel = calendar?.monthLabel || "March 2026"
+
+  const calendarCells = useMemo(() => {
+    if (!calendar?.days?.length) {
+      return fallbackCalCells.map((tone, i) => ({
+        tone,
+        day: i < 31 ? i + 1 : null,
+      }))
+    }
+
+    const firstWeekday = new Date(calendar.year, calendar.month - 1, 1).getDay()
+    const cells: Array<{ tone: CalTone; day: number | null }> = []
+
+    for (let i = 0; i < firstWeekday; i++) {
+      cells.push({ tone: "empty", day: null })
+    }
+
+    for (const dayItem of calendar.days) {
+      cells.push({ tone: dayItem.level, day: dayItem.day })
+    }
+
+    while (cells.length % 7 !== 0) {
+      cells.push({ tone: "empty", day: null })
+    }
+
+    while (cells.length < 35) {
+      cells.push({ tone: "empty", day: null })
+    }
+
+    return cells
+  }, [calendar])
+
   return (
     <Card className="border-orange-100">
       <CardHeader className="pb-2">
@@ -517,14 +755,14 @@ function DailyStreakCard() {
           <CalendarDays className="size-4 text-orange-500" />
           Daily streak
         </CardTitle>
-        <CardDescription className="text-xs">Calendar intensity in March 2026</CardDescription>
+        <CardDescription className="text-xs">Calendar intensity in {monthLabel}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3 pt-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5">
-            <span className="text-sm font-bold" style={{ color: P.rust }}>18 days</span>
+            <span className="text-sm font-bold" style={{ color: P.rust }}>{currentStreak} days</span>
             <span className="text-sm">🔥</span>
-            <span className="text-[10px] text-muted-foreground">· March 2026</span>
+            <span className="text-[10px] text-muted-foreground">· {monthLabel}</span>
           </div>
           <Badge variant="outline" className="border-orange-200 bg-orange-50 text-orange-700">Active</Badge>
         </div>
@@ -538,7 +776,7 @@ function DailyStreakCard() {
         </div>
 
         <div className="grid grid-cols-7 gap-1">
-          {calCells.map((tone, i) => (
+          {calendarCells.map((item, i) => (
             <motion.div
               key={`cal-${i}`}
               initial={{ scale: 0.95, opacity: 0.3 }}
@@ -546,9 +784,9 @@ function DailyStreakCard() {
               viewport={{ once: true }}
               transition={{ delay: i * 0.008, duration: 0.16 }}
               className="flex items-center justify-center rounded-md text-[8px] font-semibold"
-              style={{ aspectRatio: "1", ...calStyle(tone) }}
+              style={{ aspectRatio: "1", ...calStyle(item.tone) }}
             >
-              {i < 31 ? i + 1 : ""}
+              {item.day ?? ""}
             </motion.div>
           ))}
         </div>

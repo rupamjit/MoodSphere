@@ -1,4 +1,4 @@
-import Session from "../models/session.js";
+import Session from "../models/Session.js";
 import CryptoJS from "crypto-js";
 import Student from "../models/Student.js";
 
