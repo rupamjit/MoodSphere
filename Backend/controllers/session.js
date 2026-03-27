@@ -152,6 +152,104 @@ export const endSession = async (req, res) => {
   }
 };
 
+export const sendMessage = async (req, res) => {
+  try {
+    const { sessionId, message, studentId } = req.body;
+
+    // 1️⃣ Find session
+    const session = await Session.findById(sessionId);
+    if (!session) {
+      return res.status(404).json({ msg: "Session not found" });
+    }
+
+    // 2️⃣ Find student
+    const student = await Student.findById(studentId);
+    if (!student) {
+      return res.status(404).json({ msg: "Student not found" });
+    }
+
+    // 3️⃣ Get image path (🔥 NO __dirname)
+    let imagePath = null;
+    if (req.file) {
+      imagePath = req.file.path;
+
+      // Safety check
+      if (!fs.existsSync(imagePath)) {
+        console.log("Image file missing!");
+        imagePath = null;
+      }
+    }
+
+    // 4️⃣ Build student data
+    const studentData = {
+      name: student.name,
+      currentMood: student.currentMood,
+      moodScore: student.moodScore,
+      riskLevel: student.riskLevel,
+    };
+
+    // 5️⃣ Call AI Service
+    const aiResult = await getFinalAIResponse({
+      message,
+      studentData,
+      imagePath,
+    });
+
+    console.log("AI Result:", aiResult);
+
+    if (!aiResult.success) {
+      return res.status(500).json({ msg: "AI processing failed" });
+    }
+
+    const data = aiResult.data;
+
+    // 🔥 6️⃣ Extract scores (UPDATED)
+    const textScore = data.emotions?.text?.confidence || 0;
+    const faceScore = data.emotions?.image?.confidence || 0;
+    const voiceScore = 0;
+
+    // 🔥 7️⃣ Final score calculation
+    const finalScore =
+      W_TEXT * textScore +
+      W_VOICE * voiceScore +
+      W_FACE * faceScore;
+
+    // 8️⃣ Save message in DB
+    session.messages.push({
+      userMessage: encrypt(message),
+      aiResponse: data.reply,
+      textScore,
+      voiceScore,
+      faceScore,
+      finalScore,
+      emotion: data.finalEmotion,
+    });
+
+    await session.save();
+
+    // 🧹 9️⃣ Optional: delete image after processing
+    if (imagePath) {
+      fs.unlink(imagePath, () => {});
+    }
+
+    // 🔟 Send response
+    res.status(200).json({
+      reply: data.reply,
+      emotion: data.finalEmotion,
+      score: finalScore,
+      riskLevel: data.riskLevel,
+      action: data.action,
+
+      // 🔥 BONUS (very useful for frontend)
+      emotions: data.emotions,
+    });
+
+  } catch (error) {
+    console.error("SendMessage Error:", error.message);
+    res.status(500).json({ error: error.message });
+  }
+};
+
 // Get full details of one session for report view
 export const getSessionDetails = async (req, res) => {
   try {

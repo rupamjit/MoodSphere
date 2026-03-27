@@ -5,6 +5,7 @@ import multer from "multer";
 import { signup, login } from "../controllers/auth.js";
 import { startSession, sendMessage, endSession } from "../controllers/session.js";
 import { getStudentProfile, updateStudentProfile } from "../controllers/profile.js";
+import { getSessionDetails, getStudentSessionHistory } from "../controllers/session.js";
 import {
   getDashboardAiTips,
   getDashboardOverview,
