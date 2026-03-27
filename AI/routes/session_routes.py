@@ -1,7 +1,6 @@
 from flask import Blueprint, request, jsonify
 from services.session_service import get_ai_response
 from utils.formatter import build_student_context
-from db.mongo import get_student
 
 chat_bp = Blueprint("chat", __name__)
 
@@ -10,26 +9,27 @@ def chat():
     try:
         data = request.json
 
-        student_id = data.get("student_id")
+        # 🔹 Get from body
+        student_data = data.get("student_data")
         message = data.get("message")
 
-        student = get_student(student_id)
+        if not student_data or not message:
+            return jsonify({"error": "student_data and message required"}), 400
 
-        # 🔁 Dummy fallback
-        student_data = {
-            "previous_mood": 0.6,
-            "current_mood": 0.3,
-            "trend": "decreasing",
-            "situation": ["exam", "family issues"]
-        }
+        print("📥 Incoming student_data:", student_data)
 
+        # 🔹 Build context
         context = build_student_context(student_data)
 
+        # 🔹 AI response
         response = get_ai_response(context, message)
 
         return jsonify({
             "success": True,
-            "data": response
+            "data": {
+                "response": response,
+                "student_context": student_data
+            }
         })
 
     except Exception as e:
